@@ -49,25 +49,13 @@ function validateTC(tc) {
 }
 
 function parseCSV(text) {
-  // BOM karakterini temizle
-  text = text.replace(/^\uFEFF/, "");
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
-  // Ayırıcıyı tespit et (ilk satırdan)
-  const sep = lines[0].includes(";") ? ";" : lines[0].includes("\t") ? "\t" : ",";
-  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/^"|"$/g, ""));
-  const colCount = headers.length;
+  const headers = lines[0].split(/[;,\t]/).map(h => h.trim().toLowerCase());
   return lines.slice(1).map(line => {
-    const vals = line.split(sep).map(v => v.trim().replace(/^"|"$/g, ""));
-    // Adres virgül içeriyorsa son sütunları birleştir
+    const vals = line.split(/[;,\t]/).map(v => v.trim().replace(/^"|"$/g, ""));
     const row = {};
-    headers.forEach((h, i) => {
-      if (i === colCount - 1 && vals.length > colCount) {
-        row[h] = vals.slice(i).join(", ");
-      } else {
-        row[h] = vals[i] || "";
-      }
-    });
+    headers.forEach((h, i) => row[h] = vals[i] || "");
     return row;
   });
 }
@@ -79,13 +67,11 @@ function mapCSVRow(row) {
   const soyad = row["soyad"]||row["soyadı"]||"";
   const mahalle = row["mahalle"]||row["üye mahalle"]||row["ilce"]||row["semt"]||"";
   const telefon = row["telefon"]||row["tel"]||row["phone"]||row["gsm"]||row["cep telefonu"]||"";
-  const adres = row["adres"]||row["seçmen adres"]||row["ev adres"]||row["adress"]||"";
   return {
     tc_kimlik: tc.replace(/\D/g, ""),
     ad_soyad: soyad ? `${ad} ${soyad}`.trim() : ad.trim(),
     mahalle: mahalle.trim(),
     telefon: telefon.replace(/\D/g, ""),
-    adres: adres.trim(),
   };
 }
 
@@ -256,27 +242,21 @@ function QueryScreen({ admin, onLogout, onGoAdmin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [queryCount, setQueryCount] = useState(0);
-  const [memberInfo, setMemberInfo] = useState(null);
 
   const handle = async () => {
-    setResult(null); setError(""); setMemberInfo(null);
+    setResult(null); setError("");
     if (!validateTC(tc)) { setError("Geçerli bir TC Kimlik numarası giriniz"); return; }
     setLoading(true);
     try {
       const h = await hashTC(tc.trim());
-      const d = await supabase.query("members", `tc_hash=eq.${h}&select=id,ad_soyad,mahalle,telefon,adres`);
-      if (d.length > 0) {
-        setResult("uye");
-        setMemberInfo(d[0]);
-      } else {
-        setResult("degil");
-      }
+      const d = await supabase.query("members", `tc_hash=eq.${h}&select=id`);
+      setResult(d.length > 0 ? "uye" : "degil");
       setQueryCount(c => c + 1);
       try { await supabase.insert("query_logs", { admin_id: admin.id, tc_hash: h, is_member: d.length > 0 }); } catch(_) {}
     } catch(e) { setError("Sorgulama hatası: " + e.message); }
     setLoading(false);
   };
-  const reset = () => { setTC(""); setResult(null); setError(""); setMemberInfo(null); };
+  const reset = () => { setTC(""); setResult(null); setError(""); };
 
   return (
     <div style={{ minHeight:"100vh", background:ak.pageBg, display:"flex", flexDirection:"column" }}>
@@ -310,45 +290,12 @@ function QueryScreen({ admin, onLogout, onGoAdmin }) {
               {error && <div style={{ background:ak.redSoft, color:ak.red, padding:"10px 14px", borderRadius:8, fontSize:13, fontWeight:600 }}>{error}</div>}
               {!result && <Button loading={loading} onClick={handle} style={{ width:"100%", fontSize:15 }}>Sorgula</Button>}
 
-              {result === "uye" && memberInfo && (
-                <div style={{ background:"linear-gradient(135deg, #E8F5E9, #F1F8E9)", border:"2px solid #66BB6A", borderRadius:16, padding:28, animation:"fadeIn 0.4s ease" }}>
-                  <div style={{ textAlign:"center" }}>
-                    <div style={{ width:64, height:64, background:"#2E7D32", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px", fontSize:30, color:"#fff", fontWeight:800 }}>✓</div>
-                    <div style={{ fontSize:24, fontWeight:800, color:"#2E7D32" }}>ÜYE</div>
-                    <p style={{ fontSize:13, color:ak.textMuted, margin:"8px 0 0", fontWeight:500 }}>Bu kişi kayıtlı üyedir, girişi uygundur</p>
-                  </div>
-
-                  {/* Üye Bilgileri */}
-                  <div style={{ marginTop:20, background:"rgba(255,255,255,0.7)", borderRadius:12, padding:16 }}>
-                    {memberInfo.ad_soyad && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${ak.border}` }}>
-                        <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600 }}>Ad Soyad</span>
-                        <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>{memberInfo.ad_soyad}</span>
-                      </div>
-                    )}
-                    {memberInfo.mahalle && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${ak.border}` }}>
-                        <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600 }}>Mahalle</span>
-                        <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>{memberInfo.mahalle}</span>
-                      </div>
-                    )}
-                    {memberInfo.telefon && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${ak.border}` }}>
-                        <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600 }}>Telefon</span>
-                        <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>{memberInfo.telefon}</span>
-                      </div>
-                    )}
-                    {memberInfo.adres && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", gap:16 }}>
-                        <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600, whiteSpace:"nowrap" }}>Adres</span>
-                        <span style={{ fontSize:12, color:ak.textDark, fontWeight:600, textAlign:"right" }}>{memberInfo.adres}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ textAlign:"center", marginTop:16 }}>
-                    <Button variant="secondary" onClick={reset} style={{ margin:"0 auto" }}>Yeni Sorgu</Button>
-                  </div>
+              {result === "uye" && (
+                <div style={{ background:"linear-gradient(135deg, #E8F5E9, #F1F8E9)", border:"2px solid #66BB6A", borderRadius:16, padding:28, textAlign:"center", animation:"fadeIn 0.4s ease" }}>
+                  <div style={{ width:64, height:64, background:"#2E7D32", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px", fontSize:30, color:"#fff", fontWeight:800 }}>✓</div>
+                  <div style={{ fontSize:24, fontWeight:800, color:"#2E7D32" }}>ÜYE</div>
+                  <p style={{ fontSize:13, color:ak.textMuted, margin:"8px 0 18px", fontWeight:500 }}>Bu kişi kayıtlı üyedir, girişi uygundur</p>
+                  <Button variant="secondary" onClick={reset} style={{ margin:"0 auto" }}>Yeni Sorgu</Button>
                 </div>
               )}
               {result === "degil" && (
@@ -403,7 +350,7 @@ function AdminScreen({ admin, onBack }) {
         const hashed = await Promise.all(batch.map(async r => {
           const h = await hashTC(r.tc_kimlik);
           newHashes.add(h);
-          return { tc_hash: h, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon, adres: r.adres };
+          return { tc_hash: h, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon };
         }));
         preparedRows.push(...hashed);
         setUploadStatus({ phase: "hash", total: mapped.length, processed: Math.min(i + 200, mapped.length), done: false });
