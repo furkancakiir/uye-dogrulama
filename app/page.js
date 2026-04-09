@@ -279,7 +279,7 @@ function QueryScreen({ admin, onLogout, onGoAdmin }) {
               <AKPartiLogo size={28} />
               <h2 style={{ fontSize:20, fontWeight:800, color:ak.textDark, margin:0 }}>TC Kimlik Sorgula</h2>
             </div>
-            <p style={{ fontSize:13, color:ak.textMuted, margin:"4px 0 22px", fontWeight:500 }}>Ziyaretçinin TC Kimlik numarasını girerek üyelik durumunu sorgulayın</p>
+            <p style={{ fontSize:13, color:ak.textMuted, margin:"4px 0 22px", fontWeight:500 }}>Üye olduğunu beyan eden kişinin TC Kimlik numarasını girerek kayıt kontrolü yapın</p>
 
             <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
               <Input icon="🔍" placeholder="TC Kimlik No (11 haneli)" value={tc} maxLength={11}
@@ -294,7 +294,7 @@ function QueryScreen({ admin, onLogout, onGoAdmin }) {
                 <div style={{ background:"linear-gradient(135deg, #E8F5E9, #F1F8E9)", border:"2px solid #66BB6A", borderRadius:16, padding:28, textAlign:"center", animation:"fadeIn 0.4s ease" }}>
                   <div style={{ width:64, height:64, background:"#2E7D32", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px", fontSize:30, color:"#fff", fontWeight:800 }}>✓</div>
                   <div style={{ fontSize:24, fontWeight:800, color:"#2E7D32" }}>ÜYE</div>
-                  <p style={{ fontSize:13, color:ak.textMuted, margin:"8px 0 18px", fontWeight:500 }}>Bu TC Kimlik numarası üye kaydında bulunmaktadır</p>
+                  <p style={{ fontSize:13, color:ak.textMuted, margin:"8px 0 18px", fontWeight:500 }}>Bu kişi kayıtlı üyedir, girişi uygundur</p>
                   <Button variant="secondary" onClick={reset} style={{ margin:"0 auto" }}>Yeni Sorgu</Button>
                 </div>
               )}
@@ -302,7 +302,7 @@ function QueryScreen({ admin, onLogout, onGoAdmin }) {
                 <div style={{ background:"linear-gradient(135deg, #FFEBEE, #FFF3E0)", border:"2px solid #EF5350", borderRadius:16, padding:28, textAlign:"center", animation:"fadeIn 0.4s ease" }}>
                   <div style={{ width:64, height:64, background:"#D32F2F", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px", fontSize:30, color:"#fff", fontWeight:800 }}>✗</div>
                   <div style={{ fontSize:24, fontWeight:800, color:"#D32F2F" }}>ÜYE DEĞİL</div>
-                  <p style={{ fontSize:13, color:ak.textMuted, margin:"8px 0 18px", fontWeight:500 }}>Bu TC Kimlik numarası üye kaydında bulunmamaktadır</p>
+                  <p style={{ fontSize:13, color:ak.textMuted, margin:"8px 0 18px", fontWeight:500 }}>Bu kişi kayıtlı üye değildir, girişi uygun değildir</p>
                   <Button variant="secondary" onClick={reset} style={{ margin:"0 auto" }}>Yeni Sorgu</Button>
                 </div>
               )}
@@ -340,24 +340,89 @@ function AdminScreen({ admin, onBack }) {
     try {
       const text = await csvFile.text();
       const mapped = parseCSV(text).map(mapCSVRow).filter(r => r.tc_kimlik);
-      let success = 0, skipped = 0, errors = 0;
-      for (let i = 0; i < mapped.length; i += 50) {
-        const batch = mapped.slice(i, i + 50);
-        const prep = await Promise.all(batch.map(async r => ({
-          tc_hash: await hashTC(r.tc_kimlik), ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon,
-        })));
+
+      // 1. ADIM: CSV'deki tüm TC'leri hash'le
+      setUploadStatus({ phase: "hash", total: mapped.length, processed: 0, done: false });
+      const newHashes = new Set();
+      const preparedRows = [];
+      for (let i = 0; i < mapped.length; i += 200) {
+        const batch = mapped.slice(i, i + 200);
+        const hashed = await Promise.all(batch.map(async r => {
+          const h = await hashTC(r.tc_kimlik);
+          newHashes.add(h);
+          return { tc_hash: h, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon };
+        }));
+        preparedRows.push(...hashed);
+        setUploadStatus({ phase: "hash", total: mapped.length, processed: Math.min(i + 200, mapped.length), done: false });
+      }
+
+      // 2. ADIM: Mevcut üyeleri çek
+      setUploadStatus({ phase: "fetch", total: mapped.length, processed: 0, done: false });
+      let existingHashes = new Set();
+      let offset = 0;
+      while (true) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=tc_hash&offset=${offset}&limit=1000`, {
+          headers: supabase.headers,
+        });
+        const rows = await res.json();
+        if (!rows.length) break;
+        rows.forEach(r => existingHashes.add(r.tc_hash));
+        offset += 1000;
+      }
+
+      // 3. ADIM: Yeni üyeleri ekle (CSV'de var, DB'de yok)
+      const toAdd = preparedRows.filter(r => !existingHashes.has(r.tc_hash));
+      let added = 0, addErrors = 0;
+      for (let i = 0; i < toAdd.length; i += 50) {
+        const batch = toAdd.slice(i, i + 50);
         try {
           const res = await fetch(`${SUPABASE_URL}/rest/v1/members`, {
             method: "POST",
             headers: { ...supabase.headers, Prefer: "resolution=ignore-duplicates,return=representation" },
-            body: JSON.stringify(prep),
+            body: JSON.stringify(batch),
           });
-          if (res.ok) { const ins = await res.json(); success += ins.length; skipped += prep.length - ins.length; }
-          else errors += prep.length;
-        } catch { errors += batch.length; }
-        setUploadStatus({ total: mapped.length, processed: Math.min(i + 50, mapped.length), success, skipped, errors, done: false });
+          if (res.ok) { const ins = await res.json(); added += ins.length; }
+          else addErrors += batch.length;
+        } catch { addErrors += batch.length; }
+        setUploadStatus({
+          phase: "sync", total: mapped.length,
+          added, removed: 0, unchanged: existingHashes.size - (existingHashes.size - newHashes.size),
+          addErrors, removeErrors: 0, done: false,
+          toAddTotal: toAdd.length, toRemoveTotal: 0,
+          processed: Math.min(i + 50, toAdd.length),
+        });
       }
-      setUploadStatus({ total: mapped.length, processed: mapped.length, success, skipped, errors, done: true });
+
+      // 4. ADIM: Eski üyeleri sil (DB'de var, CSV'de yok)
+      const toRemove = [...existingHashes].filter(h => !newHashes.has(h));
+      let removed = 0, removeErrors = 0;
+      for (let i = 0; i < toRemove.length; i += 50) {
+        const batch = toRemove.slice(i, i + 50);
+        const hashList = batch.map(h => `"${h}"`).join(",");
+        try {
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})`, {
+            method: "DELETE",
+            headers: supabase.headers,
+          });
+          if (res.ok) removed += batch.length;
+          else removeErrors += batch.length;
+        } catch { removeErrors += batch.length; }
+        setUploadStatus({
+          phase: "sync", total: mapped.length,
+          added, removed, unchanged: existingHashes.size - toRemove.length,
+          addErrors, removeErrors, done: false,
+          toAddTotal: toAdd.length, toRemoveTotal: toRemove.length,
+          processed: toAdd.length + Math.min(i + 50, toRemove.length),
+        });
+      }
+
+      // 5. ADIM: Tamamlandı
+      setUploadStatus({
+        phase: "done", total: mapped.length,
+        added, removed, unchanged: existingHashes.size - toRemove.length,
+        addErrors, removeErrors, done: true,
+        toAddTotal: toAdd.length, toRemoveTotal: toRemove.length,
+      });
     } catch(e) { setUploadStatus({ error: e.message }); }
     setUploading(false);
   };
@@ -398,9 +463,9 @@ function AdminScreen({ admin, onBack }) {
           {tab === "upload" && (
             <Card style={{ padding:32 }}>
               <YellowBar />
-              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Üye Listesi Yükle</h3>
+              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Üye Listesi Güncelle</h3>
               <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 20px", lineHeight:1.6, fontWeight:500 }}>
-                CSV dosyanızda şu sütunlar olmalı: <b>tc</b>, <b>ad_soyad</b>, <b>mahalle</b>, <b>telefon</b>
+                CSV yüklendiğinde liste <b>tamamen senkronize</b> edilir: yeni üyeler eklenir, listede olmayanlar silinir.
               </p>
               <div
                 style={{ border:`2px dashed ${csvFile ? ak.yellowDark : ak.border}`, borderRadius:14, padding:36, textAlign:"center", marginBottom:16, background: csvFile ? ak.cream : ak.offWhite, cursor:"pointer", transition:"all 0.2s" }}
@@ -410,23 +475,47 @@ function AdminScreen({ admin, onBack }) {
                 {csvFile ? <><div style={{ fontSize:36, marginBottom:8 }}>📄</div><div style={{ fontSize:14, fontWeight:700, color:ak.yellowDark }}>{csvFile.name}</div></> :
                   <><div style={{ fontSize:36, marginBottom:8 }}>📁</div><div style={{ fontSize:14, color:ak.textMuted, fontWeight:500 }}>CSV dosyası seçmek için tıklayın</div></>}
               </div>
-              <Button loading={uploading} onClick={handleCSV} disabled={!csvFile} style={{ width:"100%", fontSize:15 }}>Yükle ve İşle</Button>
+              <Button loading={uploading} onClick={handleCSV} disabled={!csvFile} style={{ width:"100%", fontSize:15 }}>Güncelle (Senkronize Et)</Button>
 
               {uploadStatus && !uploadStatus.error && (
                 <div style={{ marginTop:18, background:ak.offWhite, border:`1px solid ${ak.border}`, borderRadius:12, padding:18 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
-                    <span style={{ fontSize:13, color:ak.textMuted, fontWeight:600 }}>İlerleme</span>
-                    <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>{uploadStatus.processed}/{uploadStatus.total}</span>
+                  {/* Faz göstergesi */}
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+                    <div style={{ width:8, height:8, borderRadius:4, background: uploadStatus.done ? ak.green : ak.yellowDark, animation: uploadStatus.done ? "none" : "pulse 1s infinite" }} />
+                    <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>
+                      {uploadStatus.phase === "hash" && "TC Kimlikler hash'leniyor..."}
+                      {uploadStatus.phase === "fetch" && "Mevcut üyeler kontrol ediliyor..."}
+                      {uploadStatus.phase === "sync" && "Senkronizasyon yapılıyor..."}
+                      {uploadStatus.phase === "done" && "Senkronizasyon tamamlandı!"}
+                    </span>
                   </div>
-                  <div style={{ height:8, background:ak.border, borderRadius:4, overflow:"hidden", marginBottom:14 }}>
-                    <div style={{ width:`${(uploadStatus.processed / uploadStatus.total) * 100}%`, height:"100%", background:`linear-gradient(90deg, ${ak.yellowDark}, ${ak.yellow})`, borderRadius:4, transition:"width 0.3s" }} />
-                  </div>
-                  <div style={{ display:"flex", gap:16, fontSize:12, fontWeight:600 }}>
-                    <span style={{ color:ak.green }}>✓ {uploadStatus.success} eklendi</span>
-                    <span style={{ color:ak.textLight }}>⊘ {uploadStatus.skipped} mükerrer</span>
-                    {uploadStatus.errors > 0 && <span style={{ color:ak.red }}>✗ {uploadStatus.errors} hata</span>}
-                  </div>
-                  {uploadStatus.done && <div style={{ marginTop:12, color:ak.green, fontSize:14, fontWeight:700 }}>Yükleme tamamlandı!</div>}
+
+                  {/* Progress bar */}
+                  {uploadStatus.phase === "hash" && (
+                    <div style={{ height:8, background:ak.border, borderRadius:4, overflow:"hidden", marginBottom:14 }}>
+                      <div style={{ width:`${(uploadStatus.processed / uploadStatus.total) * 100}%`, height:"100%", background:`linear-gradient(90deg, ${ak.yellowDark}, ${ak.yellow})`, borderRadius:4, transition:"width 0.3s" }} />
+                    </div>
+                  )}
+
+                  {/* Sonuç istatistikleri */}
+                  {(uploadStatus.phase === "sync" || uploadStatus.phase === "done") && (
+                    <div style={{ display:"flex", flexDirection:"column", gap:10, marginTop:4 }}>
+                      <div style={{ display:"flex", gap:16, fontSize:13, fontWeight:600 }}>
+                        <span style={{ color:ak.green }}>+ {uploadStatus.added} yeni eklendi</span>
+                        <span style={{ color:ak.red }}>− {uploadStatus.removed} silindi</span>
+                        <span style={{ color:ak.textMuted }}>= {uploadStatus.unchanged} değişmedi</span>
+                      </div>
+                      {(uploadStatus.addErrors > 0 || uploadStatus.removeErrors > 0) && (
+                        <span style={{ color:ak.red, fontSize:12 }}>⚠ {uploadStatus.addErrors + uploadStatus.removeErrors} hata</span>
+                      )}
+                    </div>
+                  )}
+
+                  {uploadStatus.done && (
+                    <div style={{ marginTop:14, padding:"12px 16px", background:ak.greenSoft, borderRadius:8, fontSize:13, color:ak.green, fontWeight:700, textAlign:"center" }}>
+                      Üye listesi başarıyla güncellendi — CSV: {uploadStatus.total} kayıt
+                    </div>
+                  )}
                 </div>
               )}
               {uploadStatus?.error && <div style={{ marginTop:16, background:ak.redSoft, color:ak.red, padding:"12px 14px", borderRadius:8, fontSize:13, fontWeight:600 }}>{uploadStatus.error}</div>}
