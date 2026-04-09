@@ -327,21 +327,9 @@ function QueryScreen({ admin, onLogout, onGoAdmin }) {
                       </div>
                     )}
                     {memberInfo.mahalle && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${ak.border}` }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
                         <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600 }}>Mahalle</span>
                         <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>{memberInfo.mahalle}</span>
-                      </div>
-                    )}
-                    {memberInfo.telefon && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${ak.border}` }}>
-                        <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600 }}>Telefon</span>
-                        <span style={{ fontSize:13, color:ak.textDark, fontWeight:700 }}>{memberInfo.telefon}</span>
-                      </div>
-                    )}
-                    {memberInfo.adres && (
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", gap:16 }}>
-                        <span style={{ fontSize:12, color:ak.textMuted, fontWeight:600, whiteSpace:"nowrap" }}>Adres</span>
-                        <span style={{ fontSize:12, color:ak.textDark, fontWeight:600, textAlign:"right" }}>{memberInfo.adres}</span>
                       </div>
                     )}
                   </div>
