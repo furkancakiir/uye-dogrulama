@@ -43,12 +43,31 @@ ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
 ALTER TABLE members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE query_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "anon_read_admins" ON admins FOR SELECT USING (true);
-CREATE POLICY "anon_insert_admins" ON admins FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon_read_members" ON members FOR SELECT USING (true);
-CREATE POLICY "anon_insert_members" ON members FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon_insert_logs" ON query_logs FOR INSERT WITH CHECK (true);
-CREATE POLICY "anon_read_logs" ON query_logs FOR SELECT USING (true);
+-- Admins: sadece username ve password_hash ile login sorgusu yapılabilsin
+-- (password_hash zaten SHA-256, ama yine de sadece gerekli alanlar dönsün)
+CREATE POLICY "anon_read_admins" ON admins
+    FOR SELECT USING (true);
+
+-- Admins: yeni görevli ekleme — sadece mevcut superadmin yapabilmeli
+-- (Frontend'de role kontrolü var, ek güvenlik için service_role key de kullanılabilir)
+CREATE POLICY "anon_insert_admins" ON admins
+    FOR INSERT WITH CHECK (true);
+
+-- Members: TC hash sorgusu için okuma
+CREATE POLICY "anon_read_members" ON members
+    FOR SELECT USING (true);
+
+-- Members: CSV yükleme için ekleme
+CREATE POLICY "anon_insert_members" ON members
+    FOR INSERT WITH CHECK (true);
+
+-- Query Logs: sorgu kaydı ekleme
+CREATE POLICY "anon_insert_logs" ON query_logs
+    FOR INSERT WITH CHECK (true);
+
+-- Query Logs: log okuma (admin paneli için)
+CREATE POLICY "anon_read_logs" ON query_logs
+    FOR SELECT USING (true);
 
 -- ============================================================
 -- İLK SUPERADMIN — admin / admin123
@@ -61,3 +80,13 @@ VALUES (
     'Sistem Yöneticisi',
     'superadmin'
 );
+
+-- ============================================================
+-- GÜVENLİK NOTU
+-- ============================================================
+-- Bu kurulum temel seviye RLS ile çalışır.
+-- Production için öneriler:
+-- 1. Supabase Auth kullanarak JWT bazlı doğrulama ekleyin
+-- 2. admins tablosuna UPDATE/DELETE policy'leri ekleyin
+-- 3. service_role key'i sadece backend'de kullanın
+-- 4. Rate limiting için Supabase Edge Functions kullanın

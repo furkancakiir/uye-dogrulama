@@ -588,9 +588,58 @@ function AdminScreen({ admin, onBack }) {
 export default function Home() {
   const [screen, setScreen] = useState("login");
   const [admin, setAdmin] = useState(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showInstall, setShowInstall] = useState(false);
+
+  useEffect(() => {
+    // Service Worker kaydet
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
+    // PWA Install prompt'unu yakala
+    const handler = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      setShowInstall(true);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === "accepted") setShowInstall(false);
+    setInstallPrompt(null);
+  };
 
   return (
     <>
+      {/* PWA Yükle Banner */}
+      {showInstall && (
+        <div style={{
+          position:"fixed", bottom:20, left:"50%", transform:"translateX(-50%)",
+          background:ak.black, color:ak.white, padding:"12px 20px", borderRadius:12,
+          display:"flex", alignItems:"center", gap:12, zIndex:9999,
+          boxShadow:"0 4px 20px rgba(0,0,0,0.3)", maxWidth:"90%",
+        }}>
+          <span style={{ fontSize:24 }}>📱</span>
+          <div>
+            <div style={{ fontSize:13, fontWeight:700 }}>Uygulamayı Yükle</div>
+            <div style={{ fontSize:11, color:ak.textLight }}>Ana ekrana ekleyerek uygulama gibi kullan</div>
+          </div>
+          <button onClick={handleInstall} style={{
+            background:ak.yellowDark, color:ak.black, border:"none", borderRadius:8,
+            padding:"8px 16px", fontWeight:700, fontSize:13, cursor:"pointer", whiteSpace:"nowrap",
+          }}>Yükle</button>
+          <button onClick={() => setShowInstall(false)} style={{
+            background:"transparent", color:ak.textLight, border:"none", fontSize:18, cursor:"pointer", padding:"4px",
+          }}>✕</button>
+        </div>
+      )}
+
       {screen === "login" && <LoginScreen onLogin={a => { setAdmin(a); setScreen("query"); }} />}
       {screen === "query" && <QueryScreen admin={admin} onLogout={() => { setAdmin(null); setScreen("login"); }} onGoAdmin={() => setScreen("admin")} />}
       {screen === "admin" && <AdminScreen admin={admin} onBack={() => setScreen("query")} />}
