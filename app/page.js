@@ -48,44 +48,75 @@ function validateTC(tc) {
   return d.slice(0,10).reduce((a,b)=>a+b,0) % 10 === d[10];
 }
 
-function parseCSV(text) {
-  // BOM karakterini temizle
-  text = text.replace(/^\uFEFF/, "");
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
-  // Ayırıcıyı tespit et (ilk satırdan)
-  const sep = lines[0].includes(";") ? ";" : lines[0].includes("\t") ? "\t" : ",";
-  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/^"|"$/g, ""));
-  const colCount = headers.length;
-  return lines.slice(1).map(line => {
-    const vals = line.split(sep).map(v => v.trim().replace(/^"|"$/g, ""));
-    // Adres virgül içeriyorsa son sütunları birleştir
-    const row = {};
-    headers.forEach((h, i) => {
-      if (i === colCount - 1 && vals.length > colCount) {
-        row[h] = vals.slice(i).join(", ");
-      } else {
-        row[h] = vals[i] || "";
-      }
-    });
-    return row;
+// Excel (xlsx) ve CSV parser - SheetJS CDN'den yüklenir
+let XLSX = null;
+async function loadXLSX() {
+  if (XLSX) return XLSX;
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    script.onload = () => { XLSX = window.XLSX; resolve(XLSX); };
+    script.onerror = reject;
+    document.head.appendChild(script);
   });
 }
 
-function mapCSVRow(row) {
-  // AKBİS formatı + genel formatlar desteklenir
-  const tc = row["tc"]||row["tc_kimlik"]||row["tckimlik"]||row["tc_kimlik_no"]||row["tckimlikno"]||row["kimlik_no"]||row["tc kimlik no"]||"";
+async function parseFile(file) {
+  const name = file.name.toLowerCase();
+
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    // Excel dosyası
+    const xlsx = await loadXLSX();
+    const buf = await file.arrayBuffer();
+    const wb = xlsx.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = xlsx.utils.sheet_to_json(ws, { defval: "", raw: false });
+    // Header'ları lowercase yap
+    return rows.map(row => {
+      const r = {};
+      Object.keys(row).forEach(k => { r[k.trim().toLowerCase()] = String(row[k] || "").trim(); });
+      return r;
+    });
+  } else {
+    // CSV/TXT dosyası
+    let text = await file.text();
+    text = text.replace(/^\uFEFF/, "");
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) return [];
+    const sep = lines[0].includes(";") ? ";" : lines[0].includes("\t") ? "\t" : ",";
+    const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/^"|"$/g, ""));
+    const colCount = headers.length;
+    return lines.slice(1).map(line => {
+      const vals = line.split(sep).map(v => v.trim().replace(/^"|"$/g, ""));
+      const row = {};
+      headers.forEach((h, i) => {
+        if (i === colCount - 1 && vals.length > colCount) {
+          row[h] = vals.slice(i).join(", ");
+        } else {
+          row[h] = vals[i] || "";
+        }
+      });
+      return row;
+    });
+  }
+}
+
+function mapRow(row) {
+  // AKBİS direkt sütun isimleri + genel formatlar
+  const tc = row["tc"]||row["tc kimlik no"]||row["tc_kimlik"]||row["tckimlik"]||row["tc_kimlik_no"]||row["tckimlikno"]||row["kimlik_no"]||"";
   const ad = row["ad_soyad"]||row["adsoyad"]||row["ad soyad"]||row["isim"]||row["ad"]||row["adı"]||"";
   const soyad = row["soyad"]||row["soyadı"]||"";
   const mahalle = row["mahalle"]||row["üye mahalle"]||row["ilce"]||row["semt"]||"";
   const telefon = row["telefon"]||row["tel"]||row["phone"]||row["gsm"]||row["cep telefonu"]||"";
   const adres = row["adres"]||row["seçmen adres"]||row["ev adres"]||row["adress"]||"";
+  const referans = row["referans"]||row["referanslar"]||row["referanslari"]||"";
   return {
     tc_kimlik: tc.replace(/\D/g, ""),
     ad_soyad: soyad ? `${ad} ${soyad}`.trim() : ad.trim(),
     mahalle: mahalle.trim(),
     telefon: telefon.replace(/\D/g, ""),
     adres: adres.trim(),
+    referans: referans.trim(),
   };
 }
 
@@ -368,6 +399,20 @@ function AdminScreen({ admin, onBack }) {
   const [newPass, setNewPass] = useState("");
   const [newName, setNewName] = useState("");
   const [adminMsg, setAdminMsg] = useState("");
+  const [deletedList, setDeletedList] = useState([]);
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [deletedFilter, setDeletedFilter] = useState("");
+
+  const loadDeleted = async () => {
+    setDeletedLoading(true);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=ad_soyad,mahalle,referans,silinme_tarihi&order=silinme_tarihi.desc&limit=500`, {
+        headers: supabase.headers,
+      });
+      if (res.ok) setDeletedList(await res.json());
+    } catch(e) { console.error(e); }
+    setDeletedLoading(false);
+  };
 
   useEffect(() => {
     fetch(`${SUPABASE_URL}/rest/v1/members?select=id`, {
@@ -379,8 +424,8 @@ function AdminScreen({ admin, onBack }) {
     if (!csvFile) return;
     setUploading(true); setUploadStatus(null);
     try {
-      const text = await csvFile.text();
-      const mapped = parseCSV(text).map(mapCSVRow).filter(r => r.tc_kimlik);
+      const rows = await parseFile(csvFile);
+      const mapped = rows.map(mapRow).filter(r => r.tc_kimlik);
 
       // 1. ADIM: CSV'deki tüm TC'leri hash'le
       setUploadStatus({ phase: "hash", total: mapped.length, processed: 0, done: false });
@@ -391,7 +436,7 @@ function AdminScreen({ admin, onBack }) {
         const hashed = await Promise.all(batch.map(async r => {
           const h = await hashTC(r.tc_kimlik);
           newHashes.add(h);
-          return { tc_hash: h, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon, adres: r.adres };
+          return { tc_hash: h, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon, adres: r.adres, referans: r.referans };
         }));
         preparedRows.push(...hashed);
         setUploadStatus({ phase: "hash", total: mapped.length, processed: Math.min(i + 200, mapped.length), done: false });
@@ -434,13 +479,38 @@ function AdminScreen({ admin, onBack }) {
         });
       }
 
-      // 4. ADIM: Eski üyeleri sil (DB'de var, CSV'de yok)
+      // 4. ADIM: Eski üyeleri sil (DB'de var, CSV'de yok) — önce deleted_members'a taşı
       const toRemove = [...existingHashes].filter(h => !newHashes.has(h));
       let removed = 0, removeErrors = 0;
       for (let i = 0; i < toRemove.length; i += 50) {
         const batch = toRemove.slice(i, i + 50);
         const hashList = batch.map(h => `"${h}"`).join(",");
         try {
+          // Önce silinecek üyelerin bilgilerini çek
+          const fetchRes = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})&select=tc_hash,ad_soyad,mahalle,telefon,adres,referans,created_at`, {
+            headers: supabase.headers,
+          });
+          if (fetchRes.ok) {
+            const deletedRows = await fetchRes.json();
+            // deleted_members tablosuna kopyala
+            if (deletedRows.length > 0) {
+              const archiveRows = deletedRows.map(r => ({
+                tc_hash: r.tc_hash,
+                ad_soyad: r.ad_soyad,
+                mahalle: r.mahalle,
+                telefon: r.telefon,
+                adres: r.adres,
+                referans: r.referans || "",
+                uyelik_baslangic: r.created_at,
+              }));
+              await fetch(`${SUPABASE_URL}/rest/v1/deleted_members`, {
+                method: "POST",
+                headers: { ...supabase.headers, Prefer: "return=minimal" },
+                body: JSON.stringify(archiveRows),
+              });
+            }
+          }
+          // Sonra sil
           const res = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})`, {
             method: "DELETE",
             headers: supabase.headers,
@@ -493,10 +563,10 @@ function AdminScreen({ admin, onBack }) {
           </div>
 
           <div style={{ display:"flex", gap:2, marginBottom:20, background:ak.white, borderRadius:12, padding:4, border:`1.5px solid ${ak.border}` }}>
-            {[{ id:"upload", label:"CSV Yükle" }, { id:"admins", label:"Görevli Ekle" }].map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{
+            {[{ id:"upload", label:"Dosya Yükle" }, { id:"admins", label:"Görevli Ekle" }, { id:"deleted", label:"Silinen Üyeler" }].map(t => (
+              <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "deleted") loadDeleted(); }} style={{
                 flex:1, padding:"11px", background: tab === t.id ? `linear-gradient(135deg, ${ak.yellowDark}, ${ak.yellow})` : "transparent",
-                color: tab === t.id ? ak.black : ak.textMuted, border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer", transition:"all 0.2s",
+                color: tab === t.id ? ak.black : ak.textMuted, border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", transition:"all 0.2s",
               }}>{t.label}</button>
             ))}
           </div>
@@ -506,15 +576,15 @@ function AdminScreen({ admin, onBack }) {
               <YellowBar />
               <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Üye Listesi Güncelle</h3>
               <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 20px", lineHeight:1.6, fontWeight:500 }}>
-                CSV yüklendiğinde liste <b>tamamen senkronize</b> edilir: yeni üyeler eklenir, listede olmayanlar silinir.
+                AKBİS'ten indirilen <b>Excel (.xlsx)</b> dosyasını direkt yükleyin. CSV de desteklenir. Yeni üyeler eklenir, istifa edenler silinir.
               </p>
               <div
                 style={{ border:`2px dashed ${csvFile ? ak.yellowDark : ak.border}`, borderRadius:14, padding:36, textAlign:"center", marginBottom:16, background: csvFile ? ak.cream : ak.offWhite, cursor:"pointer", transition:"all 0.2s" }}
                 onClick={() => document.getElementById("csv-input").click()}
               >
-                <input type="file" accept=".csv,.txt" onChange={e => { setCsvFile(e.target.files[0]); setUploadStatus(null); }} style={{ display:"none" }} id="csv-input" />
+                <input type="file" accept=".xlsx,.xls,.csv,.txt" onChange={e => { setCsvFile(e.target.files[0]); setUploadStatus(null); }} style={{ display:"none" }} id="csv-input" />
                 {csvFile ? <><div style={{ fontSize:36, marginBottom:8 }}>📄</div><div style={{ fontSize:14, fontWeight:700, color:ak.yellowDark }}>{csvFile.name}</div></> :
-                  <><div style={{ fontSize:36, marginBottom:8 }}>📁</div><div style={{ fontSize:14, color:ak.textMuted, fontWeight:500 }}>CSV dosyası seçmek için tıklayın</div></>}
+                  <><div style={{ fontSize:36, marginBottom:8 }}>📁</div><div style={{ fontSize:14, color:ak.textMuted, fontWeight:500 }}>Excel veya CSV dosyası seçmek için tıklayın</div></>}
               </div>
               <Button loading={uploading} onClick={handleCSV} disabled={!csvFile} style={{ width:"100%", fontSize:15 }}>Güncelle (Senkronize Et)</Button>
 
@@ -574,6 +644,85 @@ function AdminScreen({ admin, onBack }) {
                 <Button onClick={handleAdd} style={{ width:"100%", fontSize:15 }}>Görevli Ekle</Button>
                 {adminMsg && <div style={{ padding:"10px 14px", borderRadius:8, fontSize:13, fontWeight:600, background: adminMsg.includes("Hata") ? ak.redSoft : ak.greenSoft, color: adminMsg.includes("Hata") ? ak.red : ak.green }}>{adminMsg}</div>}
               </div>
+            </Card>
+          )}
+
+          {tab === "deleted" && (
+            <Card style={{ padding:32 }}>
+              <YellowBar />
+              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Silinen / İstifa Eden Üyeler</h3>
+              <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 16px", fontWeight:500 }}>
+                Üye listesinden çıkarılan kişiler burada tutulur. Referans bazlı takip yapabilirsiniz.
+              </p>
+
+              {/* Arama */}
+              <Input icon="🔍" placeholder="Ad, mahalle veya referans ile ara..." value={deletedFilter}
+                onChange={e => setDeletedFilter(e.target.value)} style={{ marginBottom:16, fontSize:13 }} />
+
+              {deletedLoading ? (
+                <div style={{ textAlign:"center", padding:24, color:ak.textMuted }}>Yükleniyor...</div>
+              ) : deletedList.length === 0 ? (
+                <div style={{ textAlign:"center", padding:24, color:ak.textMuted, fontSize:13 }}>Henüz silinen üye kaydı bulunmuyor</div>
+              ) : (
+                <>
+                  <div style={{ fontSize:12, color:ak.textMuted, marginBottom:12, fontWeight:600 }}>
+                    Toplam {deletedList.length} silinen üye
+                    {deletedFilter && ` (${deletedList.filter(d => {
+                      const f = deletedFilter.toLowerCase();
+                      return (d.ad_soyad||"").toLowerCase().includes(f) || (d.mahalle||"").toLowerCase().includes(f) || (d.referans||"").toLowerCase().includes(f);
+                    }).length} sonuç)`}
+                  </div>
+
+                  {/* Referans özet */}
+                  {!deletedFilter && (() => {
+                    const refCount = {};
+                    deletedList.forEach(d => { const r = (d.referans||"").trim(); if(r) refCount[r] = (refCount[r]||0) + 1; });
+                    const topRefs = Object.entries(refCount).sort((a,b) => b[1]-a[1]).slice(0, 5);
+                    if (topRefs.length === 0) return null;
+                    return (
+                      <div style={{ background:ak.redSoft, borderRadius:10, padding:14, marginBottom:16 }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:ak.red, marginBottom:8 }}>En Çok İstifa Veren Referanslar</div>
+                        {topRefs.map(([ref, count]) => (
+                          <div key={ref} style={{ display:"flex", justifyContent:"space-between", padding:"4px 0", fontSize:12 }}>
+                            <span style={{ color:ak.textDark, cursor:"pointer", textDecoration:"underline" }} onClick={() => setDeletedFilter(ref)}>{ref}</span>
+                            <span style={{ color:ak.red, fontWeight:700 }}>{count} üye</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Tablo */}
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                      <thead>
+                        <tr style={{ background:ak.black }}>
+                          {["#","Ad Soyad","Mahalle","Referans","Silinme Tarihi"].map(h => (
+                            <th key={h} style={{ padding:"10px 8px", color:ak.white, fontWeight:700, textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deletedList
+                          .filter(d => {
+                            if (!deletedFilter) return true;
+                            const f = deletedFilter.toLowerCase();
+                            return (d.ad_soyad||"").toLowerCase().includes(f) || (d.mahalle||"").toLowerCase().includes(f) || (d.referans||"").toLowerCase().includes(f);
+                          })
+                          .map((d, i) => (
+                          <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
+                            <td style={{ padding:"8px", color:ak.textMuted }}>{i+1}</td>
+                            <td style={{ padding:"8px", fontWeight:600, color:ak.textDark }}>{d.ad_soyad}</td>
+                            <td style={{ padding:"8px", color:ak.textMuted }}>{d.mahalle}</td>
+                            <td style={{ padding:"8px", color:ak.red, fontWeight:600 }}>{d.referans || "-"}</td>
+                            <td style={{ padding:"8px", color:ak.textLight, whiteSpace:"nowrap" }}>{d.silinme_tarihi ? new Date(d.silinme_tarihi).toLocaleDateString("tr-TR") : "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </Card>
           )}
         </div>
