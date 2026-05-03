@@ -406,7 +406,7 @@ function AdminScreen({ admin, onBack }) {
   const loadDeleted = async () => {
     setDeletedLoading(true);
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=ad_soyad,mahalle,referans,silinme_tarihi&order=silinme_tarihi.desc&limit=500`, {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=tc_no,ad_soyad,mahalle,referans,silinme_tarihi&order=silinme_tarihi.desc&limit=500`, {
         headers: supabase.headers,
       });
       if (res.ok) setDeletedList(await res.json());
@@ -436,7 +436,7 @@ function AdminScreen({ admin, onBack }) {
         const hashed = await Promise.all(batch.map(async r => {
           const h = await hashTC(r.tc_kimlik);
           newHashes.add(h);
-          return { tc_hash: h, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon, adres: r.adres, referans: r.referans };
+          return { tc_hash: h, tc_no: r.tc_kimlik, ad_soyad: r.ad_soyad, mahalle: r.mahalle, telefon: r.telefon, adres: r.adres, referans: r.referans };
         }));
         preparedRows.push(...hashed);
         setUploadStatus({ phase: "hash", total: mapped.length, processed: Math.min(i + 200, mapped.length), done: false });
@@ -487,7 +487,7 @@ function AdminScreen({ admin, onBack }) {
         const hashList = batch.map(h => `"${h}"`).join(",");
         try {
           // Önce silinecek üyelerin bilgilerini çek
-          const fetchRes = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})&select=tc_hash,ad_soyad,mahalle,telefon,adres,referans,created_at`, {
+          const fetchRes = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})&select=tc_hash,tc_no,ad_soyad,mahalle,telefon,adres,referans,created_at`, {
             headers: supabase.headers,
           });
           if (fetchRes.ok) {
@@ -496,6 +496,7 @@ function AdminScreen({ admin, onBack }) {
             if (deletedRows.length > 0) {
               const archiveRows = deletedRows.map(r => ({
                 tc_hash: r.tc_hash,
+                tc_no: r.tc_no || "",
                 ad_soyad: r.ad_soyad,
                 mahalle: r.mahalle,
                 telefon: r.telefon,
@@ -697,7 +698,7 @@ function AdminScreen({ admin, onBack }) {
                     <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                       <thead>
                         <tr style={{ background:ak.black }}>
-                          {["#","Ad Soyad","Mahalle","Referans","Silinme Tarihi"].map(h => (
+                          {["#","TC Kimlik","Ad Soyad","Mahalle","Referans","Silinme Tarihi"].map(h => (
                             <th key={h} style={{ padding:"10px 8px", color:ak.white, fontWeight:700, textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
                           ))}
                         </tr>
@@ -712,6 +713,7 @@ function AdminScreen({ admin, onBack }) {
                           .map((d, i) => (
                           <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
                             <td style={{ padding:"8px", color:ak.textMuted }}>{i+1}</td>
+                            <td style={{ padding:"8px", color:ak.textDark, fontFamily:"'JetBrains Mono',monospace", fontSize:11 }}>{d.tc_no || "-"}</td>
                             <td style={{ padding:"8px", fontWeight:600, color:ak.textDark }}>{d.ad_soyad}</td>
                             <td style={{ padding:"8px", color:ak.textMuted }}>{d.mahalle}</td>
                             <td style={{ padding:"8px", color:ak.red, fontWeight:600 }}>{d.referans || "-"}</td>
