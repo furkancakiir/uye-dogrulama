@@ -427,7 +427,48 @@ function AdminScreen({ admin, onBack }) {
     setUploading(true); setUploadStatus(null); setConfirmData(null);
     try {
       const rows = await parseFile(csvFile);
+
+      // DOSYA YAPI KONTROLÜ
+      if (rows.length === 0) {
+        setUploadStatus({ error: "Dosya boş veya okunamadı." });
+        setUploading(false);
+        return;
+      }
+
+      // İlk satırın sütunlarını kontrol et
+      const cols = Object.keys(rows[0]).map(c => c.toLowerCase());
+      const requiredFields = [
+        { names: ["tc kimlik no", "tc", "tc_kimlik", "tckimlik"], label: "TC Kimlik No" },
+        { names: ["adı", "ad", "ad_soyad", "adsoyad"], label: "Adı / Ad Soyad" },
+      ];
+      const missing = [];
+      for (const field of requiredFields) {
+        if (!field.names.some(n => cols.includes(n))) {
+          missing.push(field.label);
+        }
+      }
+      if (missing.length > 0) {
+        setUploadStatus({ error: `Bu dosya AKBİS formatına uymuyor. Eksik sütunlar: ${missing.join(", ")}. Lütfen AKBİS'ten indirilen orijinal Excel dosyasını yükleyin.` });
+        setUploading(false);
+        return;
+      }
+
+      // TC doğrulama — en az %90'ı geçerli TC olmalı
       const mapped = rows.map(mapRow).filter(r => r.tc_kimlik);
+      const validTCCount = mapped.filter(r => validateTC(r.tc_kimlik)).length;
+      const tcRatio = mapped.length > 0 ? validTCCount / mapped.length : 0;
+      if (tcRatio < 0.9) {
+        setUploadStatus({ error: `TC Kimlik doğrulama başarısız. ${mapped.length} satırdan sadece ${validTCCount} tanesi geçerli TC içeriyor (%${(tcRatio*100).toFixed(0)}). Bu dosya AKBİS listesi olmayabilir.` });
+        setUploading(false);
+        return;
+      }
+
+      // Kayıt sayısı kontrolü — çok az kayıt uyarısı
+      if (mapped.length < 1000) {
+        setUploadStatus({ error: `Dosyada sadece ${mapped.length} kayıt var. AKBİS üye listesi genellikle 60.000+ kayıt içerir. Yanlış dosya yüklemiş olabilirsiniz.` });
+        setUploading(false);
+        return;
+      }
 
       // 1. ADIM: CSV'deki tüm TC'leri hash'le
       setUploadStatus({ phase: "hash", total: mapped.length, processed: 0, done: false });
