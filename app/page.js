@@ -406,7 +406,7 @@ function AdminScreen({ admin, onBack }) {
   const loadDeleted = async () => {
     setDeletedLoading(true);
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=tc_no,ad_soyad,mahalle,referans,silinme_tarihi&order=silinme_tarihi.desc&limit=500`, {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=tc_no,ad_soyad,mahalle,referans,silinme_tarihi,tekrar_uye_tarihi&order=silinme_tarihi.desc&limit=500`, {
         headers: supabase.headers,
       });
       if (res.ok) setDeletedList(await res.json());
@@ -420,9 +420,11 @@ function AdminScreen({ admin, onBack }) {
     }).then(r => { setMemberCount(r.headers.get("content-range")?.split("/")[1] || "?"); }).catch(() => setMemberCount("?"));
   }, [uploadStatus]);
 
-  const handleCSV = async () => {
+  const [confirmData, setConfirmData] = useState(null); // onay ekranı verisi
+
+  const handleAnalyze = async () => {
     if (!csvFile) return;
-    setUploading(true); setUploadStatus(null);
+    setUploading(true); setUploadStatus(null); setConfirmData(null);
     try {
       const rows = await parseFile(csvFile);
       const mapped = rows.map(mapRow).filter(r => r.tc_kimlik);
@@ -450,18 +452,37 @@ function AdminScreen({ admin, onBack }) {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=tc_hash&offset=${offset}&limit=1000`, {
           headers: supabase.headers,
         });
-        const rows = await res.json();
-        if (!rows.length) break;
-        rows.forEach(r => existingHashes.add(r.tc_hash));
+        const fetchedRows = await res.json();
+        if (!fetchedRows.length) break;
+        fetchedRows.forEach(r => existingHashes.add(r.tc_hash));
         offset += 1000;
       }
 
-      // 3. ADIM: Yeni üyeleri ekle (CSV'de var, DB'de yok)
       const toAdd = preparedRows.filter(r => !existingHashes.has(r.tc_hash));
-      let added = 0, addErrors = 0;
+      const toRemove = [...existingHashes].filter(h => !newHashes.has(h));
+      const unchanged = existingHashes.size - toRemove.length;
+
+      // ONAY EKRANI göster
+      setConfirmData({ mapped, preparedRows, newHashes, existingHashes, toAdd, toRemove, unchanged });
+      setUploadStatus(null);
+
+    } catch(e) { setUploadStatus({ error: e.message }); }
+    setUploading(false);
+  };
+
+  const handleConfirmedSync = async () => {
+    if (!confirmData) return;
+    const { mapped, preparedRows, newHashes, existingHashes, toAdd, toRemove, unchanged } = confirmData;
+    setConfirmData(null);
+    setUploading(true);
+
+    try {
+      // 3. ADIM: Yeni üyeleri ekle + tekrar üye olanları işaretle
+      let added = 0, addErrors = 0, tekrarUye = 0;
       for (let i = 0; i < toAdd.length; i += 50) {
         const batch = toAdd.slice(i, i + 50);
         try {
+          // Önce ekle
           const res = await fetch(`${SUPABASE_URL}/rest/v1/members`, {
             method: "POST",
             headers: { ...supabase.headers, Prefer: "resolution=ignore-duplicates,return=representation" },
@@ -469,30 +490,38 @@ function AdminScreen({ admin, onBack }) {
           });
           if (res.ok) { const ins = await res.json(); added += ins.length; }
           else addErrors += batch.length;
+
+          // Eklenen TC hash'leri deleted_members'da var mı kontrol et
+          const batchHashes = batch.map(r => `"${r.tc_hash}"`).join(",");
+          try {
+            await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?tc_hash=in.(${batchHashes})`, {
+              method: "PATCH",
+              headers: { ...supabase.headers, Prefer: "return=minimal" },
+              body: JSON.stringify({ tekrar_uye_tarihi: new Date().toISOString() }),
+            });
+            // Kaç tanesi güncellendi sayamıyoruz ama sorun değil
+          } catch(_) {}
         } catch { addErrors += batch.length; }
         setUploadStatus({
           phase: "sync", total: mapped.length,
-          added, removed: 0, unchanged: existingHashes.size - (existingHashes.size - newHashes.size),
+          added, removed: 0, unchanged,
           addErrors, removeErrors: 0, done: false,
-          toAddTotal: toAdd.length, toRemoveTotal: 0,
+          toAddTotal: toAdd.length, toRemoveTotal: toRemove.length,
           processed: Math.min(i + 50, toAdd.length),
         });
       }
 
-      // 4. ADIM: Eski üyeleri sil (DB'de var, CSV'de yok) — önce deleted_members'a taşı
-      const toRemove = [...existingHashes].filter(h => !newHashes.has(h));
+      // 4. ADIM: Eski üyeleri sil — önce deleted_members'a taşı
       let removed = 0, removeErrors = 0;
       for (let i = 0; i < toRemove.length; i += 50) {
         const batch = toRemove.slice(i, i + 50);
         const hashList = batch.map(h => `"${h}"`).join(",");
         try {
-          // Önce silinecek üyelerin bilgilerini çek
           const fetchRes = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})&select=tc_hash,tc_no,ad_soyad,mahalle,telefon,adres,referans,created_at`, {
             headers: supabase.headers,
           });
           if (fetchRes.ok) {
             const deletedRows = await fetchRes.json();
-            // deleted_members tablosuna kopyala
             if (deletedRows.length > 0) {
               const archiveRows = deletedRows.map(r => ({
                 tc_hash: r.tc_hash,
@@ -511,7 +540,6 @@ function AdminScreen({ admin, onBack }) {
               });
             }
           }
-          // Sonra sil
           const res = await fetch(`${SUPABASE_URL}/rest/v1/members?tc_hash=in.(${hashList})`, {
             method: "DELETE",
             headers: supabase.headers,
@@ -521,7 +549,7 @@ function AdminScreen({ admin, onBack }) {
         } catch { removeErrors += batch.length; }
         setUploadStatus({
           phase: "sync", total: mapped.length,
-          added, removed, unchanged: existingHashes.size - toRemove.length,
+          added, removed, unchanged,
           addErrors, removeErrors, done: false,
           toAddTotal: toAdd.length, toRemoveTotal: toRemove.length,
           processed: toAdd.length + Math.min(i + 50, toRemove.length),
@@ -531,7 +559,7 @@ function AdminScreen({ admin, onBack }) {
       // 5. ADIM: Tamamlandı
       setUploadStatus({
         phase: "done", total: mapped.length,
-        added, removed, unchanged: existingHashes.size - toRemove.length,
+        added, removed, unchanged,
         addErrors, removeErrors, done: true,
         toAddTotal: toAdd.length, toRemoveTotal: toRemove.length,
       });
@@ -587,7 +615,43 @@ function AdminScreen({ admin, onBack }) {
                 {csvFile ? <><div style={{ fontSize:36, marginBottom:8 }}>📄</div><div style={{ fontSize:14, fontWeight:700, color:ak.yellowDark }}>{csvFile.name}</div></> :
                   <><div style={{ fontSize:36, marginBottom:8 }}>📁</div><div style={{ fontSize:14, color:ak.textMuted, fontWeight:500 }}>Excel veya CSV dosyası seçmek için tıklayın</div></>}
               </div>
-              <Button loading={uploading} onClick={handleCSV} disabled={!csvFile} style={{ width:"100%", fontSize:15 }}>Güncelle (Senkronize Et)</Button>
+              <Button loading={uploading} onClick={handleAnalyze} disabled={!csvFile || confirmData} style={{ width:"100%", fontSize:15 }}>Analiz Et</Button>
+
+              {/* ONAY EKRANI */}
+              {confirmData && (
+                <div style={{ marginTop:18, background:ak.white, border:`2px solid ${ak.yellowDark}`, borderRadius:14, padding:20 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+                    <span style={{ fontSize:24 }}>⚠️</span>
+                    <span style={{ fontSize:16, fontWeight:800, color:ak.textDark }}>Senkronizasyon Onayı</span>
+                  </div>
+
+                  <div style={{ display:"flex", gap:12, marginBottom:16 }}>
+                    <div style={{ flex:1, background:ak.greenSoft, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:24, fontWeight:800, color:ak.green }}>+{confirmData.toAdd.length}</div>
+                      <div style={{ fontSize:11, color:ak.textMuted, fontWeight:600 }}>YENİ EKLENECEK</div>
+                    </div>
+                    <div style={{ flex:1, background:ak.redSoft, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:24, fontWeight:800, color:ak.red }}>−{confirmData.toRemove.length}</div>
+                      <div style={{ fontSize:11, color:ak.textMuted, fontWeight:600 }}>SİLİNECEK</div>
+                    </div>
+                    <div style={{ flex:1, background:ak.offWhite, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:24, fontWeight:800, color:ak.textMuted }}>{confirmData.unchanged}</div>
+                      <div style={{ fontSize:11, color:ak.textMuted, fontWeight:600 }}>DEĞİŞMEYECEK</div>
+                    </div>
+                  </div>
+
+                  {confirmData.toRemove.length > 0 && (
+                    <div style={{ background:ak.redSoft, borderRadius:8, padding:12, marginBottom:14, fontSize:12, color:ak.red, fontWeight:600 }}>
+                      ⚠ {confirmData.toRemove.length} üye silinecek ve "Silinen Üyeler" tablosuna taşınacaktır. Bu işlem geri alınamaz.
+                    </div>
+                  )}
+
+                  <div style={{ display:"flex", gap:10 }}>
+                    <Button onClick={handleConfirmedSync} style={{ flex:1, fontSize:14 }}>Onayla ve Senkronize Et</Button>
+                    <Button variant="secondary" onClick={() => setConfirmData(null)} style={{ flex:1, fontSize:14 }}>İptal</Button>
+                  </div>
+                </div>
+              )}
 
               {uploadStatus && !uploadStatus.error && (
                 <div style={{ marginTop:18, background:ak.offWhite, border:`1px solid ${ak.border}`, borderRadius:12, padding:18 }}>
@@ -698,8 +762,8 @@ function AdminScreen({ admin, onBack }) {
                     <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                       <thead>
                         <tr style={{ background:ak.black }}>
-                          {["#","TC Kimlik","Ad Soyad","Mahalle","Referans","Silinme Tarihi"].map(h => (
-                            <th key={h} style={{ padding:"10px 8px", color:ak.white, fontWeight:700, textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                          {["#","TC Kimlik","Ad Soyad","Mahalle","Referans","Silinme","Durum"].map(h => (
+                            <th key={h} style={{ padding:"10px 6px", color:ak.white, fontWeight:700, textAlign:"left", whiteSpace:"nowrap", fontSize:11 }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -711,13 +775,24 @@ function AdminScreen({ admin, onBack }) {
                             return (d.ad_soyad||"").toLowerCase().includes(f) || (d.mahalle||"").toLowerCase().includes(f) || (d.referans||"").toLowerCase().includes(f);
                           })
                           .map((d, i) => (
-                          <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
+                          <tr key={i} style={{ background: d.tekrar_uye_tarihi ? "rgba(46,125,50,0.06)" : i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
                             <td style={{ padding:"8px", color:ak.textMuted }}>{i+1}</td>
                             <td style={{ padding:"8px", color:ak.textDark, fontFamily:"'JetBrains Mono',monospace", fontSize:11 }}>{d.tc_no || "-"}</td>
                             <td style={{ padding:"8px", fontWeight:600, color:ak.textDark }}>{d.ad_soyad}</td>
                             <td style={{ padding:"8px", color:ak.textMuted }}>{d.mahalle}</td>
                             <td style={{ padding:"8px", color:ak.red, fontWeight:600 }}>{d.referans || "-"}</td>
                             <td style={{ padding:"8px", color:ak.textLight, whiteSpace:"nowrap" }}>{d.silinme_tarihi ? new Date(d.silinme_tarihi).toLocaleDateString("tr-TR") : "-"}</td>
+                            <td style={{ padding:"8px", whiteSpace:"nowrap" }}>
+                              {d.tekrar_uye_tarihi ? (
+                                <span style={{ background:ak.greenSoft, color:ak.green, padding:"3px 8px", borderRadius:6, fontSize:10, fontWeight:700 }}>
+                                  TEKRAR ÜYE {new Date(d.tekrar_uye_tarihi).toLocaleDateString("tr-TR")}
+                                </span>
+                              ) : (
+                                <span style={{ background:ak.redSoft, color:ak.red, padding:"3px 8px", borderRadius:6, fontSize:10, fontWeight:700 }}>
+                                  İSTİFA
+                                </span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
