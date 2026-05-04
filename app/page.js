@@ -218,7 +218,7 @@ function Header({ children }) {
         <AKPartiLogo size={34} />
         <div>
           <div style={{ fontSize:15, fontWeight:700, color:ak.textDark, letterSpacing:-0.3 }}>Üye Doğrulama</div>
-          <div style={{ fontSize:10, color:ak.textLight, fontWeight:600 }}>Başakşehir İlçe Teşkilatı</div>
+          <div style={{ fontSize:10, color:ak.textLight, fontWeight:600 }}>AK Parti Üye Doğrulama</div>
         </div>
       </div>
       <div style={{ display:"flex", alignItems:"center", gap:10 }}>{children}</div>
@@ -254,7 +254,7 @@ function LoginScreen({ onLogin }) {
         <div style={{ textAlign:"center", marginBottom:28 }}>
           <AKPartiLogo size={64} />
           <h1 style={{ fontSize:22, fontWeight:800, color:ak.textDark, margin:"12px 0 4px", letterSpacing:-0.5 }}>Üye Doğrulama Sistemi</h1>
-          <p style={{ fontSize:13, color:ak.textMuted, margin:0, fontWeight:500 }}>Başakşehir İlçe Teşkilatı</p>
+          <p style={{ fontSize:13, color:ak.textMuted, margin:0, fontWeight:500 }}>AK Parti Üye Doğrulama Sistemi</p>
         </div>
 
         <Card style={{ padding:32 }}>
@@ -272,7 +272,7 @@ function LoginScreen({ onLogin }) {
             <Button loading={loading} onClick={handle} style={{ width:"100%", fontSize:15, padding:"14px" }}>Giriş Yap</Button>
           </div>
         </Card>
-        <p style={{ textAlign:"center", fontSize:11, color:ak.textLight, marginTop:20, fontWeight:500 }}>AK Parti Başakşehir İlçe BT Komisyonu</p>
+        <p style={{ textAlign:"center", fontSize:11, color:ak.textLight, marginTop:20, fontWeight:500 }}>AK Parti Üye Doğrulama Sistemi</p>
       </div>
     </div>
   );
@@ -402,6 +402,145 @@ function AdminScreen({ admin, onBack }) {
   const [deletedList, setDeletedList] = useState([]);
   const [deletedLoading, setDeletedLoading] = useState(false);
   const [deletedFilter, setDeletedFilter] = useState("");
+
+  // Dashboard state'leri
+  const [dashData, setDashData] = useState(null);
+  const [dashLoading, setDashLoading] = useState(false);
+  const [mahalleData, setMahalleData] = useState(null);
+  const [referansData, setReferansData] = useState(null);
+  const [pingpongData, setPingpongData] = useState(null);
+
+  // Görevli performans
+  const loadDashboard = async () => {
+    setDashLoading(true);
+    try {
+      // Görevli bazlı sorgu sayıları
+      const logsRes = await fetch(`${SUPABASE_URL}/rest/v1/query_logs?select=admin_id,tc_hash,is_member,queried_at`, { headers: supabase.headers });
+      const logs = logsRes.ok ? await logsRes.json() : [];
+
+      const adminsRes = await fetch(`${SUPABASE_URL}/rest/v1/admins?select=id,display_name,username`, { headers: supabase.headers });
+      const admins = adminsRes.ok ? await adminsRes.json() : [];
+
+      const adminMap = {};
+      admins.forEach(a => { adminMap[a.id] = a.display_name || a.username; });
+
+      // Görevli bazlı gruplama
+      const gorevliStats = {};
+      logs.forEach(l => {
+        const name = adminMap[l.admin_id] || "Bilinmeyen";
+        if (!gorevliStats[name]) gorevliStats[name] = { toplam: 0, benzersiz: new Set(), uye: 0, degil: 0, sonSorgu: null };
+        gorevliStats[name].toplam++;
+        gorevliStats[name].benzersiz.add(l.tc_hash);
+        if (l.is_member) gorevliStats[name].uye++; else gorevliStats[name].degil++;
+        if (!gorevliStats[name].sonSorgu || l.queried_at > gorevliStats[name].sonSorgu) gorevliStats[name].sonSorgu = l.queried_at;
+      });
+
+      const gorevliList = Object.entries(gorevliStats)
+        .map(([name, s]) => ({ name, toplam: s.toplam, benzersiz: s.benzersiz.size, uye: s.uye, degil: s.degil, sonSorgu: s.sonSorgu }))
+        .sort((a, b) => b.benzersiz - a.benzersiz);
+
+      // Günlük sorgu trendi (son 14 gün)
+      const gunluk = {};
+      logs.forEach(l => {
+        const d = l.queried_at?.split("T")[0];
+        if (d) gunluk[d] = (gunluk[d] || 0) + 1;
+      });
+
+      setDashData({ gorevliList, toplamSorgu: logs.length, toplamBenzersiz: new Set(logs.map(l => l.tc_hash)).size, gunluk });
+    } catch(e) { console.error(e); }
+    setDashLoading(false);
+  };
+
+  // Mahalle bazlı üye analizi
+  const loadMahalle = async () => {
+    setDashLoading(true);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=mahalle`, { headers: supabase.headers });
+      const rows = res.ok ? await res.json() : [];
+      const mahalleCount = {};
+      rows.forEach(r => {
+        const m = (r.mahalle || "Belirtilmemiş").trim();
+        mahalleCount[m] = (mahalleCount[m] || 0) + 1;
+      });
+
+      // Silinen üyeler mahalle bazlı
+      const delRes = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=mahalle,tekrar_uye_tarihi`, { headers: supabase.headers });
+      const delRows = delRes.ok ? await delRes.json() : [];
+      const mahalleIstifa = {};
+      delRows.forEach(r => {
+        const m = (r.mahalle || "Belirtilmemiş").trim();
+        if (!r.tekrar_uye_tarihi) mahalleIstifa[m] = (mahalleIstifa[m] || 0) + 1;
+      });
+
+      const mahalleList = Object.entries(mahalleCount)
+        .map(([mahalle, uye]) => ({ mahalle, uye, istifa: mahalleIstifa[mahalle] || 0 }))
+        .sort((a, b) => b.uye - a.uye);
+
+      setMahalleData({ mahalleList, toplamUye: rows.length, toplamMahalle: mahalleList.length });
+    } catch(e) { console.error(e); }
+    setDashLoading(false);
+  };
+
+  // Referans bazlı üye kazanım
+  const loadReferans = async () => {
+    setDashLoading(true);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=referans`, { headers: supabase.headers });
+      const rows = res.ok ? await res.json() : [];
+      const refCount = {};
+      rows.forEach(r => {
+        const ref = (r.referans || "").trim();
+        if (ref) refCount[ref] = (refCount[ref] || 0) + 1;
+      });
+
+      // İstifa edenler referans bazlı
+      const delRes = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=referans,tekrar_uye_tarihi`, { headers: supabase.headers });
+      const delRows = delRes.ok ? await delRes.json() : [];
+      const refIstifa = {};
+      delRows.forEach(r => {
+        const ref = (r.referans || "").trim();
+        if (ref && !r.tekrar_uye_tarihi) refIstifa[ref] = (refIstifa[ref] || 0) + 1;
+      });
+
+      const refList = Object.entries(refCount)
+        .map(([referans, kazanim]) => ({ referans, kazanim, istifa: refIstifa[referans] || 0, net: kazanim - (refIstifa[referans] || 0) }))
+        .sort((a, b) => b.kazanim - a.kazanim);
+
+      setReferansData({ refList, toplamReferans: refList.length });
+    } catch(e) { console.error(e); }
+    setDashLoading(false);
+  };
+
+  // Ping-pong üyeler
+  const loadPingpong = async () => {
+    setDashLoading(true);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/deleted_members?select=tc_no,ad_soyad,mahalle,referans,silinme_tarihi,tekrar_uye_tarihi`, { headers: supabase.headers });
+      const rows = res.ok ? await res.json() : [];
+
+      // TC bazlı gruplama — birden fazla kaydı olanlar
+      const tcGroup = {};
+      rows.forEach(r => {
+        const tc = r.tc_no || r.ad_soyad;
+        if (!tcGroup[tc]) tcGroup[tc] = { ad_soyad: r.ad_soyad, mahalle: r.mahalle, referans: r.referans, kayitlar: [] };
+        tcGroup[tc].kayitlar.push({ silinme: r.silinme_tarihi, tekrar: r.tekrar_uye_tarihi });
+      });
+
+      // Tekrar üye olanlar (en az 1 kez istifa edip geri dönenler)
+      const pingpongList = Object.values(tcGroup)
+        .filter(g => g.kayitlar.some(k => k.tekrar))
+        .map(g => ({
+          ad_soyad: g.ad_soyad, mahalle: g.mahalle, referans: g.referans,
+          istifaSayisi: g.kayitlar.length,
+          sonIstifa: g.kayitlar.sort((a,b) => (b.silinme||"").localeCompare(a.silinme||""))[0]?.silinme,
+          sonTekrar: g.kayitlar.filter(k => k.tekrar).sort((a,b) => (b.tekrar||"").localeCompare(a.tekrar||""))[0]?.tekrar,
+        }))
+        .sort((a, b) => b.istifaSayisi - a.istifaSayisi);
+
+      setPingpongData({ pingpongList, toplamIstifa: rows.filter(r => !r.tekrar_uye_tarihi).length, toplamTekrar: rows.filter(r => r.tekrar_uye_tarihi).length });
+    } catch(e) { console.error(e); }
+    setDashLoading(false);
+  };
 
   const loadDeleted = async () => {
     setDeletedLoading(true);
@@ -632,11 +771,26 @@ function AdminScreen({ admin, onBack }) {
             <span style={{ fontSize:28, fontWeight:800, color:ak.yellowDark }}>{memberCount}</span>
           </div>
 
-          <div style={{ display:"flex", gap:2, marginBottom:20, background:ak.white, borderRadius:12, padding:4, border:`1.5px solid ${ak.border}` }}>
-            {[{ id:"upload", label:"Dosya Yükle" }, { id:"admins", label:"Görevli Ekle" }, { id:"deleted", label:"Silinen Üyeler" }].map(t => (
-              <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "deleted") loadDeleted(); }} style={{
-                flex:1, padding:"11px", background: tab === t.id ? `linear-gradient(135deg, ${ak.yellowDark}, ${ak.yellow})` : "transparent",
-                color: tab === t.id ? ak.black : ak.textMuted, border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", transition:"all 0.2s",
+          <div style={{ display:"flex", gap:2, marginBottom:20, background:ak.white, borderRadius:12, padding:4, border:`1.5px solid ${ak.border}`, flexWrap:"wrap" }}>
+            {[
+              { id:"upload", label:"📁 Dosya Yükle" },
+              { id:"admins", label:"👤 Görevli Ekle" },
+              { id:"deleted", label:"🗑 Silinen Üyeler" },
+              { id:"performance", label:"📊 Performans" },
+              { id:"mahalle", label:"🏘 Mahalleler" },
+              { id:"referans", label:"🤝 Referanslar" },
+              { id:"pingpong", label:"🔄 Ping-Pong" },
+            ].map(t => (
+              <button key={t.id} onClick={() => {
+                setTab(t.id);
+                if (t.id === "deleted") loadDeleted();
+                if (t.id === "performance") loadDashboard();
+                if (t.id === "mahalle") loadMahalle();
+                if (t.id === "referans") loadReferans();
+                if (t.id === "pingpong") loadPingpong();
+              }} style={{
+                flex:"1 1 auto", minWidth:"30%", padding:"10px 6px", background: tab === t.id ? `linear-gradient(135deg, ${ak.yellowDark}, ${ak.yellow})` : "transparent",
+                color: tab === t.id ? ak.black : ak.textMuted, border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", transition:"all 0.2s",
               }}>{t.label}</button>
             ))}
           </div>
@@ -839,6 +993,188 @@ function AdminScreen({ admin, onBack }) {
                       </tbody>
                     </table>
                   </div>
+                </>
+              )}
+            </Card>
+          )}
+
+          {/* PERFORMANS TAB */}
+          {tab === "performance" && (
+            <Card style={{ padding:32 }}>
+              <YellowBar />
+              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Görevli Performans Raporu</h3>
+              <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 20px", fontWeight:500 }}>Kim ne kadar sorgulama yaptı, hangi mahalle aktif</p>
+              {dashLoading ? <div style={{ textAlign:"center", padding:24 }}><Spinner /></div> :
+               !dashData ? <div style={{ textAlign:"center", padding:24, color:ak.textMuted }}>Veri yükleniyor...</div> : (
+                <>
+                  <div style={{ display:"flex", gap:12, marginBottom:20, flexWrap:"wrap" }}>
+                    <div style={{ flex:1, minWidth:120, background:ak.cream, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.yellowDark }}>{dashData.toplamBenzersiz}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>BENZERSİZ SORGU</div>
+                    </div>
+                    <div style={{ flex:1, minWidth:120, background:ak.cream, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.yellowDark }}>{dashData.toplamSorgu}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>TOPLAM SORGU</div>
+                    </div>
+                    <div style={{ flex:1, minWidth:120, background:ak.cream, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.yellowDark }}>{dashData.gorevliList.length}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>AKTİF GÖREVLİ</div>
+                    </div>
+                  </div>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                      <thead><tr style={{ background:ak.black }}>
+                        {["#","Görevli","Benzersiz","Toplam","Üye","Üye Değil","Son Sorgu"].map(h => (
+                          <th key={h} style={{ padding:"10px 6px", color:ak.white, fontWeight:700, textAlign:"center", fontSize:11 }}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>{dashData.gorevliList.map((g, i) => (
+                        <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textMuted }}>{i+1}</td>
+                          <td style={{ padding:"8px 6px", fontWeight:700, color:ak.textDark }}>{g.name}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", fontWeight:700, color:ak.yellowDark }}>{g.benzersiz}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textMuted }}>{g.toplam}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.green, fontWeight:600 }}>{g.uye}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.red, fontWeight:600 }}>{g.degil}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textLight, fontSize:11 }}>{g.sonSorgu ? new Date(g.sonSorgu).toLocaleDateString("tr-TR") : "-"}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
+          {/* MAHALLE TAB */}
+          {tab === "mahalle" && (
+            <Card style={{ padding:32 }}>
+              <YellowBar />
+              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Mahalle Bazlı Üye Analizi</h3>
+              <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 20px", fontWeight:500 }}>Her mahalledeki üye sayısı ve istifa durumu</p>
+              {dashLoading ? <div style={{ textAlign:"center", padding:24 }}><Spinner /></div> :
+               !mahalleData ? <div style={{ textAlign:"center", padding:24, color:ak.textMuted }}>Veri yükleniyor...</div> : (
+                <>
+                  <div style={{ display:"flex", gap:12, marginBottom:20 }}>
+                    <div style={{ flex:1, background:ak.cream, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.yellowDark }}>{mahalleData.toplamUye.toLocaleString("tr-TR")}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>TOPLAM ÜYE</div>
+                    </div>
+                    <div style={{ flex:1, background:ak.cream, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.yellowDark }}>{mahalleData.toplamMahalle}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>MAHALLE</div>
+                    </div>
+                  </div>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                      <thead><tr style={{ background:ak.black }}>
+                        {["#","Mahalle","Üye Sayısı","İstifa","Oran"].map(h => (
+                          <th key={h} style={{ padding:"10px 6px", color:ak.white, fontWeight:700, textAlign:"center", fontSize:11 }}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>{mahalleData.mahalleList.map((m, i) => (
+                        <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textMuted }}>{i+1}</td>
+                          <td style={{ padding:"8px 6px", fontWeight:700, color:ak.textDark }}>{m.mahalle}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", fontWeight:700, color:ak.yellowDark }}>{m.uye.toLocaleString("tr-TR")}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.red, fontWeight:600 }}>{m.istifa || "-"}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center" }}>
+                            <div style={{ width:"100%", height:8, background:ak.border, borderRadius:4, overflow:"hidden" }}>
+                              <div style={{ width:`${(m.uye / mahalleData.toplamUye) * 100}%`, height:"100%", background:`linear-gradient(90deg, ${ak.yellowDark}, ${ak.yellow})`, borderRadius:4, minWidth:2 }} />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
+          {/* REFERANS TAB */}
+          {tab === "referans" && (
+            <Card style={{ padding:32 }}>
+              <YellowBar />
+              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Referans Bazlı Üye Kazanım Raporu</h3>
+              <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 20px", fontWeight:500 }}>Kim kaç üye kazandırmış, kaçı istifa etmiş</p>
+              {dashLoading ? <div style={{ textAlign:"center", padding:24 }}><Spinner /></div> :
+               !referansData ? <div style={{ textAlign:"center", padding:24, color:ak.textMuted }}>Veri yükleniyor...</div> : (
+                <>
+                  <div style={{ marginBottom:16, fontSize:12, color:ak.textMuted, fontWeight:600 }}>Toplam {referansData.toplamReferans} farklı referans</div>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                      <thead><tr style={{ background:ak.black }}>
+                        {["#","Referans","Kazanım","İstifa","Net"].map(h => (
+                          <th key={h} style={{ padding:"10px 6px", color:ak.white, fontWeight:700, textAlign:"center", fontSize:11 }}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>{referansData.refList.slice(0, 50).map((r, i) => (
+                        <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
+                          <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textMuted }}>{i+1}</td>
+                          <td style={{ padding:"8px 6px", fontWeight:700, color:ak.textDark }}>{r.referans}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", fontWeight:700, color:ak.green }}>{r.kazanim.toLocaleString("tr-TR")}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", fontWeight:600, color:ak.red }}>{r.istifa || "-"}</td>
+                          <td style={{ padding:"8px 6px", textAlign:"center", fontWeight:800, color: r.net >= 0 ? ak.green : ak.red }}>{r.net >= 0 ? "+" : ""}{r.net.toLocaleString("tr-TR")}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                  {referansData.refList.length > 50 && <div style={{ textAlign:"center", marginTop:12, fontSize:11, color:ak.textLight }}>İlk 50 referans gösteriliyor (toplam {referansData.refList.length})</div>}
+                </>
+              )}
+            </Card>
+          )}
+
+          {/* PİNG-PONG TAB */}
+          {tab === "pingpong" && (
+            <Card style={{ padding:32 }}>
+              <YellowBar />
+              <h3 style={{ fontSize:18, fontWeight:800, color:ak.textDark, margin:"0 0 6px" }}>Ping-Pong Üyeler</h3>
+              <p style={{ fontSize:13, color:ak.textMuted, margin:"0 0 20px", fontWeight:500 }}>Sürekli istifa edip tekrar üye olan kişiler</p>
+              {dashLoading ? <div style={{ textAlign:"center", padding:24 }}><Spinner /></div> :
+               !pingpongData ? <div style={{ textAlign:"center", padding:24, color:ak.textMuted }}>Veri yükleniyor...</div> : (
+                <>
+                  <div style={{ display:"flex", gap:12, marginBottom:20 }}>
+                    <div style={{ flex:1, background:ak.redSoft, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.red }}>{pingpongData.toplamIstifa}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>AKTİF İSTİFA</div>
+                    </div>
+                    <div style={{ flex:1, background:ak.greenSoft, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.green }}>{pingpongData.toplamTekrar}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>TEKRAR ÜYE</div>
+                    </div>
+                    <div style={{ flex:1, background:ak.cream, borderRadius:10, padding:14, textAlign:"center" }}>
+                      <div style={{ fontSize:22, fontWeight:800, color:ak.yellowDark }}>{pingpongData.pingpongList.length}</div>
+                      <div style={{ fontSize:10, color:ak.textMuted, fontWeight:700 }}>PİNG-PONG</div>
+                    </div>
+                  </div>
+                  {pingpongData.pingpongList.length === 0 ? (
+                    <div style={{ textAlign:"center", padding:24, color:ak.textMuted, fontSize:13 }}>Henüz ping-pong üye tespit edilmedi. Veriler biriktikçe burada görünecek.</div>
+                  ) : (
+                    <div style={{ overflowX:"auto" }}>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead><tr style={{ background:ak.black }}>
+                          {["#","Ad Soyad","Mahalle","Referans","İstifa Sayısı","Son İstifa","Son Dönüş"].map(h => (
+                            <th key={h} style={{ padding:"10px 6px", color:ak.white, fontWeight:700, textAlign:"center", fontSize:10 }}>{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>{pingpongData.pingpongList.map((p, i) => (
+                          <tr key={i} style={{ background: i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
+                            <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textMuted }}>{i+1}</td>
+                            <td style={{ padding:"8px 6px", fontWeight:700, color:ak.textDark }}>{p.ad_soyad}</td>
+                            <td style={{ padding:"8px 6px", color:ak.textMuted }}>{p.mahalle}</td>
+                            <td style={{ padding:"8px 6px", color:ak.red, fontWeight:600 }}>{p.referans || "-"}</td>
+                            <td style={{ padding:"8px 6px", textAlign:"center" }}>
+                              <span style={{ background:ak.redSoft, color:ak.red, padding:"3px 10px", borderRadius:6, fontWeight:800, fontSize:13 }}>{p.istifaSayisi}</span>
+                            </td>
+                            <td style={{ padding:"8px 6px", textAlign:"center", color:ak.textLight, fontSize:11 }}>{p.sonIstifa ? new Date(p.sonIstifa).toLocaleDateString("tr-TR") : "-"}</td>
+                            <td style={{ padding:"8px 6px", textAlign:"center", color:ak.green, fontSize:11, fontWeight:600 }}>{p.sonTekrar ? new Date(p.sonTekrar).toLocaleDateString("tr-TR") : "-"}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  )}
                 </>
               )}
             </Card>
