@@ -124,24 +124,7 @@ function mapRow(row) {
 // AK PARTİ AMPUL LOGO
 // ============================================================
 function AKPartiLogo({ size = 60 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <line x1="60" y1="4" x2="60" y2="16" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <line x1="30" y1="16" x2="36" y2="26" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <line x1="90" y1="16" x2="84" y2="26" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <line x1="12" y1="48" x2="24" y2="48" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <line x1="108" y1="48" x2="96" y2="48" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <line x1="22" y1="76" x2="32" y2="70" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <line x1="98" y1="76" x2="88" y2="70" stroke="#F5A623" strokeWidth="3.5" strokeLinecap="round"/>
-      <path d="M40 72 C40 72 32 60 32 46 C32 30 44 20 60 20 C76 20 88 30 88 46 C88 60 80 72 80 72 Z" fill="#FBC02D" stroke="#F5A623" strokeWidth="2"/>
-      <path d="M45 68 C45 68 38 58 38 46 C38 33 47 25 60 25 C73 25 82 33 82 46 C82 58 75 68 75 68 Z" fill="#FFD54F" opacity="0.6"/>
-      <path d="M52 65 Q55 45 60 40 Q65 45 68 65" stroke="#E65100" strokeWidth="2" fill="none" strokeLinecap="round"/>
-      <rect x="44" y="74" width="32" height="5" rx="1.5" fill="#404040"/>
-      <rect x="46" y="79" width="28" height="4" rx="1" fill="#666"/>
-      <rect x="44" y="83" width="32" height="5" rx="1.5" fill="#404040"/>
-      <rect x="48" y="88" width="24" height="6" rx="3" fill="#333"/>
-    </svg>
-  );
+  return <img src="/akparti-logo.png" alt="AK Parti" style={{ width: size, height: size, objectFit: "contain" }} />;
 }
 
 // ============================================================
@@ -272,7 +255,8 @@ function LoginScreen({ onLogin }) {
             <Button loading={loading} onClick={handle} style={{ width:"100%", fontSize:15, padding:"14px" }}>Giriş Yap</Button>
           </div>
         </Card>
-        <p style={{ textAlign:"center", fontSize:11, color:ak.textLight, marginTop:20, fontWeight:500 }}>AK Parti Üye Doğrulama Sistemi</p>
+        <p style={{ textAlign:"center", fontSize:13, color:ak.textDark, marginTop:20, fontWeight:800 }}>AK Parti Başakşehir İlçe Başkanlığı Bilgi ve İletişim Teknolojileri Birimi tarafından hazırlanmıştır</p>
+        <p style={{ textAlign:"center", fontSize:11, color:ak.textMuted, marginTop:8, fontWeight:600 }}>© 2026 AK Parti Başakşehir İlçe Başkanlığı. Tüm hakları saklıdır.</p>
       </div>
     </div>
   );

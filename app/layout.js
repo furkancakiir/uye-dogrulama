@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Üye Doğrulama | AK Parti Başakşehir",
-  description: "AK Parti Başakşehir İlçe Teşkilatı Üye Doğrulama Sistemi",
+  title: "AK Parti Üye Doğrulama Sistemi",
+  description: "AK Parti Üye Doğrulama Sistemi",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
