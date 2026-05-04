@@ -414,9 +414,17 @@ function AdminScreen({ admin, onBack }) {
   const loadDashboard = async () => {
     setDashLoading(true);
     try {
-      // Görevli bazlı sorgu sayıları
-      const logsRes = await fetch(`${SUPABASE_URL}/rest/v1/query_logs?select=admin_id,tc_hash,is_member,queried_at`, { headers: supabase.headers });
-      const logs = logsRes.ok ? await logsRes.json() : [];
+      // Görevli bazlı sorgu sayıları - tüm logları çek (pagination)
+      let logs = [];
+      let offset = 0;
+      while (true) {
+        const logsRes = await fetch(`${SUPABASE_URL}/rest/v1/query_logs?select=admin_id,tc_hash,is_member,queried_at&order=queried_at.desc&offset=${offset}&limit=1000`, { headers: supabase.headers });
+        const batch = logsRes.ok ? await logsRes.json() : [];
+        if (batch.length === 0) break;
+        logs.push(...batch);
+        offset += 1000;
+        if (batch.length < 1000) break;
+      }
 
       const adminsRes = await fetch(`${SUPABASE_URL}/rest/v1/admins?select=id,display_name,username`, { headers: supabase.headers });
       const admins = adminsRes.ok ? await adminsRes.json() : [];
