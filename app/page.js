@@ -754,7 +754,7 @@ function AdminScreen({ admin, onBack }) {
     <div style={{ minHeight:"100vh", background:ak.pageBg, display:"flex", flexDirection:"column" }}>
       <Header><Button variant="secondary" onClick={onBack} style={{ padding:"7px 14px", fontSize:12 }}>← Sorgu Ekranı</Button></Header>
       <div style={{ flex:1, display:"flex", justifyContent:"center", padding:24 }}>
-        <div style={{ width:"100%", maxWidth:560 }}>
+        <div style={{ width:"100%", maxWidth:900 }}>
           <div style={{ background:ak.cream, border:`1.5px solid ${ak.yellowDark}22`, borderRadius:14, padding:"16px 24px", marginBottom:20, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <AKPartiLogo size={24} />
@@ -946,11 +946,11 @@ function AdminScreen({ admin, onBack }) {
 
                   {/* Tablo */}
                   <div style={{ overflowX:"auto" }}>
-                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, minWidth:800 }}>
                       <thead>
                         <tr style={{ background:ak.black }}>
                           {["#","TC Kimlik","Ad Soyad","Mahalle","Referans","Silinme","Durum"].map(h => (
-                            <th key={h} style={{ padding:"10px 6px", color:ak.white, fontWeight:700, textAlign:"left", whiteSpace:"nowrap", fontSize:11 }}>{h}</th>
+                            <th key={h} style={{ padding:"12px 10px", color:ak.white, fontWeight:700, textAlign:"left", whiteSpace:"nowrap", fontSize:12 }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -963,19 +963,19 @@ function AdminScreen({ admin, onBack }) {
                           })
                           .map((d, i) => (
                           <tr key={i} style={{ background: d.tekrar_uye_tarihi ? "rgba(46,125,50,0.06)" : i%2===0 ? ak.offWhite : ak.white, borderBottom:`1px solid ${ak.border}` }}>
-                            <td style={{ padding:"8px", color:ak.textMuted }}>{i+1}</td>
-                            <td style={{ padding:"8px", color:ak.textDark, fontFamily:"'JetBrains Mono',monospace", fontSize:11 }}>{d.tc_no || "-"}</td>
-                            <td style={{ padding:"8px", fontWeight:600, color:ak.textDark }}>{d.ad_soyad}</td>
-                            <td style={{ padding:"8px", color:ak.textMuted }}>{d.mahalle}</td>
-                            <td style={{ padding:"8px", color:ak.red, fontWeight:600 }}>{d.referans || "-"}</td>
-                            <td style={{ padding:"8px", color:ak.textLight, whiteSpace:"nowrap" }}>{d.silinme_tarihi ? new Date(d.silinme_tarihi).toLocaleDateString("tr-TR") : "-"}</td>
-                            <td style={{ padding:"8px", whiteSpace:"nowrap" }}>
+                            <td style={{ padding:"10px 10px", color:ak.textMuted, fontSize:12 }}>{i+1}</td>
+                            <td style={{ padding:"10px 10px", color:ak.textDark, fontFamily:"'JetBrains Mono',monospace", fontSize:12, fontWeight:600 }}>{d.tc_no || "-"}</td>
+                            <td style={{ padding:"10px 10px", fontWeight:700, color:ak.textDark, fontSize:13 }}>{d.ad_soyad}</td>
+                            <td style={{ padding:"10px 10px", color:ak.textDark, fontSize:12, fontWeight:500 }}>{d.mahalle}</td>
+                            <td style={{ padding:"10px 10px", color:ak.red, fontWeight:700, fontSize:12 }}>{d.referans || "-"}</td>
+                            <td style={{ padding:"10px 10px", color:ak.textMuted, whiteSpace:"nowrap", fontSize:12 }}>{d.silinme_tarihi ? new Date(d.silinme_tarihi).toLocaleDateString("tr-TR") : "-"}</td>
+                            <td style={{ padding:"10px 10px", whiteSpace:"nowrap" }}>
                               {d.tekrar_uye_tarihi ? (
-                                <span style={{ background:ak.greenSoft, color:ak.green, padding:"3px 8px", borderRadius:6, fontSize:10, fontWeight:700 }}>
+                                <span style={{ background:ak.greenSoft, color:ak.green, padding:"5px 12px", borderRadius:8, fontSize:11, fontWeight:700, display:"inline-block" }}>
                                   TEKRAR ÜYE {new Date(d.tekrar_uye_tarihi).toLocaleDateString("tr-TR")}
                                 </span>
                               ) : (
-                                <span style={{ background:ak.redSoft, color:ak.red, padding:"3px 8px", borderRadius:6, fontSize:10, fontWeight:700 }}>
+                                <span style={{ background:ak.redSoft, color:ak.red, padding:"5px 12px", borderRadius:8, fontSize:11, fontWeight:700, display:"inline-block" }}>
                                   İSTİFA
                                 </span>
                               )}
