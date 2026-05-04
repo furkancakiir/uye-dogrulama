@@ -447,8 +447,17 @@ function AdminScreen({ admin, onBack }) {
   const loadMahalle = async () => {
     setDashLoading(true);
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=mahalle`, { headers: supabase.headers });
-      const rows = res.ok ? await res.json() : [];
+      // Tüm üyeleri pagination ile çek
+      let rows = [];
+      let offset = 0;
+      while (true) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=mahalle&offset=${offset}&limit=1000`, { headers: supabase.headers });
+        const batch = res.ok ? await res.json() : [];
+        if (batch.length === 0) break;
+        rows.push(...batch);
+        offset += 1000;
+        if (batch.length < 1000) break;
+      }
       const mahalleCount = {};
       rows.forEach(r => {
         const m = (r.mahalle || "Belirtilmemiş").trim();
@@ -477,8 +486,16 @@ function AdminScreen({ admin, onBack }) {
   const loadReferans = async () => {
     setDashLoading(true);
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=referans`, { headers: supabase.headers });
-      const rows = res.ok ? await res.json() : [];
+      let rows = [];
+      let offset = 0;
+      while (true) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/members?select=referans&offset=${offset}&limit=1000`, { headers: supabase.headers });
+        const batch = res.ok ? await res.json() : [];
+        if (batch.length === 0) break;
+        rows.push(...batch);
+        offset += 1000;
+        if (batch.length < 1000) break;
+      }
       const refCount = {};
       rows.forEach(r => {
         const ref = (r.referans || "").trim();
