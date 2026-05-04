@@ -784,10 +784,10 @@ function AdminScreen({ admin, onBack }) {
               <button key={t.id} onClick={() => {
                 setTab(t.id);
                 if (t.id === "deleted") loadDeleted();
-                if (t.id === "performance") loadDashboard();
-                if (t.id === "mahalle") loadMahalle();
-                if (t.id === "referans") loadReferans();
-                if (t.id === "pingpong") loadPingpong();
+                if (t.id === "performance") { setDashData(null); loadDashboard(); }
+                if (t.id === "mahalle") { setMahalleData(null); loadMahalle(); }
+                if (t.id === "referans") { setReferansData(null); loadReferans(); }
+                if (t.id === "pingpong") { setPingpongData(null); loadPingpong(); }
               }} style={{
                 flex:"1 1 auto", minWidth:"30%", padding:"10px 6px", background: tab === t.id ? `linear-gradient(135deg, ${ak.yellowDark}, ${ak.yellow})` : "transparent",
                 color: tab === t.id ? ak.black : ak.textMuted, border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", transition:"all 0.2s",
